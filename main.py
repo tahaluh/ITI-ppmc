@@ -272,7 +272,9 @@ def comprimir(
         # print(f"Eventos: {eventos}")
 
 
-def comprimir_multiplos(arquivos, output_path, kmax, janela=None, pct_reset=10.0):
+def comprimir_multiplos(
+    arquivos, output_path, kmax, janela=None, pct_reset=10.0, salvar_progressivo=False
+):
     """Comprime múltiplos arquivos em uma única compressão com detecção de transição."""
     print(
         f"Comprimindo {len(arquivos)} arquivo(s) para {output_path} com kmax={kmax}..."
@@ -310,6 +312,8 @@ def comprimir_multiplos(arquivos, output_path, kmax, janela=None, pct_reset=10.0
     soma_bits_janela = 0.0
     itens_janela = 0
     proximo_arquivo_idx = 1  # Índice do próximo arquivo para transição
+    dados_progressivos = []
+    bits_acumulados = 0
 
     for i in range(len(dados_completos)):
         # Log de progresso
@@ -338,6 +342,12 @@ def comprimir_multiplos(arquivos, output_path, kmax, janela=None, pct_reset=10.0
         eventos_simbolo = procurar_simbolo(contexto, simbolo)
         comprimento_simbolo = codificar_eventos(eventos_simbolo)
         atualizar_modelo(contexto, simbolo)
+
+        # Coletar dados progressivos
+        if salvar_progressivo:
+            bits_acumulados += comprimento_simbolo
+            if i % 5000 == 0 or i == len(dados_completos) - 1:
+                dados_progressivos.append((i + 1, bits_acumulados))
 
         if janela is not None:
             soma_bits_janela += comprimento_simbolo
@@ -384,6 +394,15 @@ def comprimir_multiplos(arquivos, output_path, kmax, janela=None, pct_reset=10.0
 
         # Dados comprimidos
         outfile.write(bytes_data)
+
+    # Salvar dados progressivos se solicitado
+    if salvar_progressivo and dados_progressivos:
+        prog_path = output_path.replace(".ppmc", "_progressivo.txt")
+        with open(prog_path, "w") as f:
+            f.write("posicao bits_acumulados\n")
+            for pos, bits_acum in dados_progressivos:
+                f.write(f"{pos} {bits_acum}\n")
+        print(f"Dados progressivos salvos em {prog_path}")
 
 
 def descomprimir(input_path, kmax, janela=None, pct_reset=10.0):
@@ -495,7 +514,12 @@ def main():
 
         output_path = "output.ppmc"
         comprimir_multiplos(
-            args.arquivos, output_path, args.kmax, args.janela, args.pct_reset
+            args.arquivos,
+            output_path,
+            args.kmax,
+            args.janela,
+            args.pct_reset,
+            args.progressivo,
         )
     else:
         # Descompressão
