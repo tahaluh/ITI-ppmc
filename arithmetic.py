@@ -79,6 +79,8 @@ def ler_bit():
     if decoder["pos"] < len(decoder["bits"]):
         bit = decoder["bits"][decoder["pos"]]
         decoder["pos"] += 1
+        if isinstance(bit, str):
+            return 1 if bit == "1" else 0
         return bit
     return 0
 
