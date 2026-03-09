@@ -8,17 +8,26 @@ eventos = []
 
 def procurar_simbolo(contexto, simbolo):
     eventos = []
+    excluidos = set()
+
     for j in range(len(contexto) + 1):
-        # verifica modelo
         subcontexto = contexto[j:]
 
-        if subcontexto in modelo and simbolo in modelo[subcontexto]:
+        if subcontexto in modelo:
+            simbolos_contexto = set(modelo[subcontexto].keys())
+        else:
+            simbolos_contexto = set()
+
+        simbolos_validos = simbolos_contexto - excluidos
+
+        if simbolo in simbolos_validos:
             eventos.append((subcontexto, simbolo))
             return eventos
-        # fora do alfabeto
+
         if subcontexto:
             # desce contexto
             eventos.append((subcontexto, ESC))
+            excluidos.update(simbolos_contexto)
         else:
             # novo simbolo
             eventos.append((subcontexto, simbolo))
