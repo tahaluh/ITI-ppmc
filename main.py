@@ -13,18 +13,24 @@ def procurar_simbolo(contexto, simbolo):
         subcontexto = contexto[j:]
 
         if subcontexto in modelo and simbolo in modelo[subcontexto]:
-            eventos.append(subcontexto)
+            eventos.append((subcontexto, simbolo))
+            return eventos
         # fora do alfabeto
-        eventos.append(ESC)
+        if subcontexto:
+            # desce contexto
+            eventos.append((subcontexto, ESC))
+        else:
+            # novo simbolo
+            eventos.append((subcontexto, simbolo))
 
-    return None
+    return eventos
 
 
 def atualizar_modelo(contexto, simbolo):
     for j in range(len(contexto) + 1):
         # verifica modelo
         subcontexto = contexto[j:]
-        print(f"  subcontexto: {subcontexto}")
+        # print(f"  subcontexto: {subcontexto}")
 
         if subcontexto not in modelo:
             # simbolo novo, adc no modelo
@@ -46,20 +52,18 @@ def comprimir(input_path, output_path, kmax):
             # atual kmax anteiores
             contexto = data[max(0, i - kmax) : i]
             simbolo = data[i]
-            print(f"contexto: {contexto}, simbolo: {simbolo}")
+            # print(f"contexto: {contexto}, simbolo: {simbolo}")
 
-            contexto_encontrado = procurar_simbolo(contexto, simbolo)
+            eventos_simbolo = procurar_simbolo(contexto, simbolo)
 
-            if contexto_encontrado is None:
-                eventos.append
-            else:
-                eventos.append()
+            eventos.extend(eventos_simbolo)
 
             atualizar_modelo(contexto, simbolo)
 
         # exibe modelo
-        print("\nModelo de frequências:")
-        print(modelo)
+        # print("\nModelo de frequências:")
+        # print(modelo)
+        print(f"Eventos: {eventos}")
 
 
 def descomprimir(kmax):
