@@ -1,11 +1,38 @@
 import argparse
 
-from arithmetic import codificar_intervalo
+from arithmetic import (
+    codificar_intervalo,
+    decodificar_simbolo,
+    finalizar_encoder,
+    inicializar_decoder,
+    inicializar_encoder,
+)
 
 ESC = 256
 
 modelo = {}
 eventos = []
+
+
+def decodificar_evento(contexto):
+    excluidos = set()
+
+    for j in range(len(contexto) + 1):
+        subcontexto = contexto[j:]
+        frequencias = obter_frequencias(subcontexto, excluidos)
+        cumulativos, total = construir_cumulativos(frequencias)
+
+        simbolo_encontrado = decodificar_simbolo(cumulativos, total)
+
+        if simbolo_encontrado == ESC:
+            if subcontexto:
+                if subcontexto in modelo:
+                    excluidos.update(modelo[subcontexto].keys())
+                continue
+            raise ValueError("Símbolo de escape encontrado no contexto vazio.")
+        return simbolo_encontrado, subcontexto, excluidos.copy()
+
+    raise ValueError("Falha ao decodificar símbolo real.")
 
 
 def codificar_eventos(eventos_simbolo):
@@ -47,13 +74,12 @@ def obter_frequencias(contexto, excluidos, evento=None):
 
     simbolos_validos = simbolos_contexto - excluidos
 
-    frequencias = {s: tabela[s] for s in simbolos_validos}
-
     if contexto:  # não é contexto vazio
+        frequencias = {s: tabela[s] for s in simbolos_validos}
         frequencias[ESC] = 1
-    elif evento is not None:  # contexto vazio, simbolo novo
-        frequencias[evento] = 1
+        return frequencias
 
+    frequencias = {s: 1 for s in range(256) if s not in excluidos}
     return frequencias
 
 
@@ -102,12 +128,20 @@ def atualizar_modelo(contexto, simbolo):
         modelo[subcontexto][simbolo] += 1
 
 
+def salvar_arquivo_comprimido(output_path, kmax, tamanho_original, codigo_final):
+    with open(output_path, "w", encoding="utf-8") as outfile:
+        outfile.write(f"{kmax}\n")
+        outfile.write(f"{tamanho_original}\n")
+        outfile.write("".join(map(str, codigo_final)) + "\n")
+
+
 def comprimir(input_path, output_path, kmax):
     print(f"Comprimindo {input_path} para {output_path} com kmax={kmax}...")
 
     with open(input_path, "rb") as infile:
         data = infile.read()
 
+        inicializar_encoder()
         for i in range(len(data)):
             # atual kmax anteiores
             contexto = data[max(0, i - kmax) : i]
@@ -122,18 +156,56 @@ def comprimir(input_path, output_path, kmax):
 
             atualizar_modelo(contexto, simbolo)
 
+        codigo_final = finalizar_encoder()
+        print(f"Código final: {codigo_final}")
+        salvar_arquivo_comprimido(output_path, kmax, len(data), codigo_final)
         # exibe modelo
         # print("\nModelo de frequências:")
         # print(modelo)
-        print(f"Eventos: {eventos}")
+        # print(f"Eventos: {eventos}")
 
 
-def descomprimir(kmax):
-    print(f"Descomprimindo com kmax={kmax}...")
+def descomprimir(input_path, output_path, kmax):
+    print(f"Descomprimindo {input_path} para {output_path} com kmax={kmax}...")
+
+    with open(input_path, "r", encoding="utf-8") as infile:
+        kmax = int(infile.readline().strip())
+        tamanho_original = int(infile.readline().strip())
+
+        # array de bytes do código final
+        bitstream = infile.readline().strip()
+        bits = [int(b) for b in bitstream]
+
+        print(
+            f"kmax: {kmax}, tamanho original: {tamanho_original}, código final: {bits}"
+        )
+
+        inicializar_decoder(bits)
+
+        saida = bytearray()
+
+        while len(saida) < tamanho_original:
+            # contexto descomprimido
+            contexto = bytes(saida[max(0, len(saida) - kmax) :])
+
+            simbolo, _, _ = decodificar_evento(contexto)
+            if simbolo is None:
+                print("Erro: símbolo não encontrado durante a descompressão.")
+                break
+
+            saida.append(simbolo)
+            atualizar_modelo(contexto, simbolo)
+
+        with open(output_path, "wb") as outfile:
+            outfile.write(saida)
+        print(f"Descompressão concluída. Saída salva em {output_path}.")
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "mode", type=int, choices=[0, 1], help="0=comprimir, 1=descomprimir"
+    )
     parser.add_argument("kmax", type=int, help="Valor numerico de kmax")
     return parser.parse_args()
 
@@ -143,8 +215,12 @@ def main():
 
     input_path = "input.txt"
     output_path = "output.ppmc"
+    output_path_descomprimido = "output_descomprimido.txt"
 
-    comprimir(input_path, output_path, args.kmax)
+    if args.mode == 0:
+        comprimir(input_path, output_path, args.kmax)
+    else:
+        descomprimir(output_path, output_path_descomprimido, args.kmax)
 
 
 if __name__ == "__main__":
