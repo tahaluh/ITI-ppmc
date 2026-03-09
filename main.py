@@ -227,9 +227,7 @@ def comprimir(
             atualizar_modelo(contexto, simbolo)
 
             # Coletar dados progressivos para análise
-            if salvar_progressivo and (
-                i % intervalo_amostragem == 0 or i == total_bytes - 1
-            ):
+            if salvar_progressivo and (i % 100 == 0 or i == total_bytes - 1):
                 bits_acumulados = len(encoder["bits"])
                 dados_progressivos.append((i + 1, bits_acumulados))
 
@@ -346,7 +344,7 @@ def comprimir_multiplos(
         # Coletar dados progressivos
         if salvar_progressivo:
             bits_acumulados += comprimento_simbolo
-            if i % 5000 == 0 or i == len(dados_completos) - 1:
+            if i % 100 == 0 or i == len(dados_completos) - 1:
                 dados_progressivos.append((i + 1, bits_acumulados))
 
         if janela is not None:
