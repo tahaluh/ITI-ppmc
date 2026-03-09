@@ -1,9 +1,60 @@
 import argparse
 
+from arithmetic import codificar_intervalo
+
 ESC = 256
 
 modelo = {}
 eventos = []
+
+
+def codificar_eventos(eventos_simbolo):
+    for contexto, simbolo, excluidos in eventos_simbolo:
+        codificar_evento(contexto, simbolo, excluidos)
+
+
+def codificar_evento(contexto, evento, excluidos):
+    frequencias = obter_frequencias(contexto, excluidos, evento)
+    cumulativos, total = construir_cumulativos(frequencias)
+
+    inicio, fim = cumulativos[evento]
+
+    codificar_intervalo(inicio, fim, total)
+
+
+def construir_cumulativos(frequencias):
+    cumulativos = {}
+    acumulado = 0
+
+    # ordenacao deterministica
+    for simbolo in sorted(frequencias.keys()):
+        freq = frequencias[simbolo]
+        cumulativos[simbolo] = (acumulado, acumulado + freq)
+        acumulado += freq
+
+    total = acumulado
+
+    return cumulativos, total
+
+
+def obter_frequencias(contexto, excluidos, evento=None):
+    if contexto in modelo:
+        simbolos_contexto = set(modelo[contexto].keys())
+        tabela = modelo[contexto]
+    else:
+        simbolos_contexto = set()
+        tabela = {}
+
+    simbolos_validos = simbolos_contexto - excluidos
+
+    frequencias = {s: tabela[s] for s in simbolos_validos}
+
+    if contexto:  # não é contexto vazio
+        frequencias[ESC] = 1
+    elif evento is not None:  # contexto vazio, simbolo novo
+        frequencias[evento] = 1
+
+    return frequencias
 
 
 def procurar_simbolo(contexto, simbolo):
@@ -21,16 +72,16 @@ def procurar_simbolo(contexto, simbolo):
         simbolos_validos = simbolos_contexto - excluidos
 
         if simbolo in simbolos_validos:
-            eventos.append((subcontexto, simbolo))
+            eventos.append((subcontexto, simbolo, excluidos.copy()))
             return eventos
 
         if subcontexto:
             # desce contexto
-            eventos.append((subcontexto, ESC))
+            eventos.append((subcontexto, ESC, excluidos.copy()))
             excluidos.update(simbolos_contexto)
         else:
             # novo simbolo
-            eventos.append((subcontexto, simbolo))
+            eventos.append((subcontexto, simbolo, excluidos.copy()))
 
     return eventos
 
@@ -64,6 +115,8 @@ def comprimir(input_path, output_path, kmax):
             # print(f"contexto: {contexto}, simbolo: {simbolo}")
 
             eventos_simbolo = procurar_simbolo(contexto, simbolo)
+
+            codificar_eventos(eventos_simbolo)
 
             eventos.extend(eventos_simbolo)
 
