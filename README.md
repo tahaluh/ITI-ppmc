@@ -8,36 +8,29 @@ Implementação do algoritmo PPMC com codificação aritmética para compressão
 
 ## Uso
 
-### Comprimir arquivo
+### Comprimir arquivo único
 
 ```bash
-python3 main.py 0 <kmax> [opções]
+python3 main.py 0 <kmax> <arquivo>
 ```
 
-**Parâmetros:**
-- `0`: modo compressão
-- `<kmax>`: tamanho máximo do contexto (recomendado: 2-4)
-
-**Opções:**
-- `--janela [N]`: ativa monitoramento por janela (padrão: 1000 se não especificar N)
-- `--pct-reset <percentual>`: percentual de piora para reset do modelo (padrão: 10.0)
-
-**Exemplos:**
+### Comprimir múltiplos arquivos
 
 ```bash
-# Compressão simples com kmax=4
-python3 main.py 0 4
-
-# Compressão com monitoramento de janela (tamanho 1000)
-python3 main.py 0 4 --janela
-
-# Compressão com janela customizada e threshold de reset
-python3 main.py 0 4 --janela 2000 --pct-reset 15
+python3 main.py 0 <kmax> <arquivo1> <arquivo2> ... <arquivoN> [opções]
 ```
 
-**Entrada/Saída:**
-- Arquivo de entrada: configurado no código (padrão: `dickens`)
-- Arquivo de saída: `output.ppmc`
+**Exemplo com Corpus Silesia:**
+
+```bash
+python3 main.py 0 4 silesia/dickens silesia/mozilla silesia/xml --janela 1000 --pct-reset 15
+```
+
+Neste modo, o compressor:
+1. Carrega todos os arquivos sequencialmente
+2. Detecta transições entre arquivos e força reset do modelo
+3. Monitora taxa local dentro de janelas adaptativas
+4. Salva metadados da estrutura no arquivo `.ppmc`
 
 ### Descomprimir arquivo
 
@@ -86,3 +79,65 @@ Quando `--janela` é ativado, o compressor:
 - Recomenda-se usar `kmax` menor (2-3) para arquivos grandes
 - O arquivo comprimido usa formato binário real (não texto) para máxima eficiência
 - Logs de progresso aparecem a cada 1000 símbolos processados
+
+## Análise e Testes
+
+### Script de análise completa (3.1, 3.2, 3.3)
+
+Para executar análise completa de performance, aprendizado e transições:
+
+```bash
+python3 analise_completa.py
+```
+
+Este script executa:
+
+**3.1 - Análise de Ordem e Performance:**
+- Testa kmax de 0 a 10
+- Registra: bits/símbolo, quantidade de compressão, tempo
+- Salva resultados em: `analise_3_1_resultados.csv`
+
+**3.2 - Aprendizado Progressivo (Dickens):**
+- Coleta comprimento médio progressivo durante compressão
+- Identifica ponto de estabilização no arquivo
+- Gera dados para gráfico em `output_progressivo.txt`
+- Cria script `plotar_3_2.py` para visualização
+
+**3.3 - Transições e Reset (Corpus Silesia):**
+- Comprime múltiplos arquivos do Silesia
+- Detecta transições entre arquivos
+- Monitora resets automáticos por piora de taxa
+- Analisa impacto das transições na compressão
+
+**Aviso:** A análise completa pode levar **1-3 horas** dependendo dos arquivos disponíveis.
+
+Para testar apenas 3.2 (rápido):
+```bash
+python3 main.py 0 4 dickens --progressivo
+python3 plotar_3_2.py
+```
+
+### Corpus Silesia
+
+Os arquivos do Corpus Silesia devem estar em: `silesia/`
+
+Arquivos suportados:
+- dickens (texto literário)
+- mozilla (código)
+- mr (dados mistos)
+- nci (dados biomédicos)
+- ooffice (documento Office)
+- osdb (database)
+- reymont (MIDI)
+- samba (código-fonte)
+- sao (SAO database)
+- webster (dicionário)
+- x-ray (imagem médica)
+- xml (dados estruturados)
+
+### Todo o requisito 3.1 e 3.2 pode ser processado com:
+
+```bash
+# Teste único com análise de aprendizado
+python3 main.py 0 4 silesia/dickens --janela 1000 --pct-reset 15
+```

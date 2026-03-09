@@ -159,7 +159,12 @@ def bytes_para_bits(bytes_data, num_bits):
 
 
 def salvar_arquivo_comprimido(
-    output_path, kmax, tamanho_original, nome_original, codigo_final
+    output_path,
+    kmax,
+    tamanho_original,
+    nome_original,
+    codigo_final,
+    dados_progressivos=None,
 ):
     bytes_data, num_bits = bits_para_bytes(codigo_final)
 
@@ -170,8 +175,20 @@ def salvar_arquivo_comprimido(
         # Bits em binario
         outfile.write(bytes_data)
 
+    # Salvar dados progressivos se fornecidos
+    if dados_progressivos:
+        prog_path = output_path.replace(".ppmc", "_progressivo.txt")
+        with open(prog_path, "w") as f:
+            f.write("posicao,bits_acumulados,comprimento_medio\n")
+            for pos, bits_acum in dados_progressivos:
+                comp_medio = bits_acum / pos if pos > 0 else 0
+                f.write(f"{pos},{bits_acum},{comp_medio:.6f}\n")
+        print(f"Dados progressivos salvos em {prog_path}")
 
-def comprimir(input_path, output_path, kmax, janela=None, pct_reset=10.0):
+
+def comprimir(
+    input_path, output_path, kmax, janela=None, pct_reset=10.0, salvar_progressivo=False
+):
     print(f"Comprimindo {input_path} para {output_path} com kmax={kmax}...")
 
     if janela is not None:
@@ -187,6 +204,10 @@ def comprimir(input_path, output_path, kmax, janela=None, pct_reset=10.0):
         soma_bits_janela = 0.0
         itens_janela = 0
         total_bytes = len(data)
+
+        # Para análise de aprendizado
+        dados_progressivos = []
+        intervalo_amostragem = max(1, total_bytes // 1000)  # 1000 pontos no gráfico
 
         for i in range(len(data)):
             # Log de progresso a cada 1000 símbolos
@@ -204,6 +225,13 @@ def comprimir(input_path, output_path, kmax, janela=None, pct_reset=10.0):
             comprimento_simbolo = codificar_eventos(eventos_simbolo)
 
             atualizar_modelo(contexto, simbolo)
+
+            # Coletar dados progressivos para análise
+            if salvar_progressivo and (
+                i % intervalo_amostragem == 0 or i == total_bytes - 1
+            ):
+                bits_acumulados = len(encoder["bits"])
+                dados_progressivos.append((i + 1, bits_acumulados))
 
             if janela is not None:
                 soma_bits_janela += comprimento_simbolo
@@ -231,12 +259,131 @@ def comprimir(input_path, output_path, kmax, janela=None, pct_reset=10.0):
         print(f"Compressao finalizada: {len(codigo_final)} bits gerados")
         nome_original = os.path.basename(input_path)
         salvar_arquivo_comprimido(
-            output_path, kmax, len(data), nome_original, codigo_final
+            output_path,
+            kmax,
+            len(data),
+            nome_original,
+            codigo_final,
+            dados_progressivos if salvar_progressivo else None,
         )
         # exibe modelo
         # print("\nModelo de frequências:")
         # print(modelo)
         # print(f"Eventos: {eventos}")
+
+
+def comprimir_multiplos(arquivos, output_path, kmax, janela=None, pct_reset=10.0):
+    """Comprime múltiplos arquivos em uma única compressão com detecção de transição."""
+    print(
+        f"Comprimindo {len(arquivos)} arquivo(s) para {output_path} com kmax={kmax}..."
+    )
+
+    # Ler todos os arquivos
+    dados_completos = bytearray()
+    estrutura_arquivos = []  # Lista de (nome, tamanho, offset_inicio)
+    offset = 0
+
+    for arquivo_path in arquivos:
+        try:
+            with open(arquivo_path, "rb") as f:
+                dados = f.read()
+                estrutura_arquivos.append(
+                    (os.path.basename(arquivo_path), len(dados), offset)
+                )
+                dados_completos.extend(dados)
+                offset += len(dados)
+                print(f"  Carregado: {arquivo_path} ({len(dados)} bytes)")
+        except FileNotFoundError:
+            print(f"Erro: Arquivo {arquivo_path} não encontrado")
+            return
+
+    total_bytes = len(dados_completos)
+    print(f"Total: {len(arquivos)} arquivo(s), {total_bytes} bytes")
+
+    if janela is not None:
+        print(f"Monitoramento local ativo: janela={janela}, pct_reset={pct_reset}%")
+
+    reset_modelo()
+    inicializar_encoder()
+
+    media_janela_anterior = None
+    soma_bits_janela = 0.0
+    itens_janela = 0
+    proximo_arquivo_idx = 1  # Índice do próximo arquivo para transição
+
+    for i in range(len(dados_completos)):
+        # Log de progresso
+        if i > 0 and i % 100000 == 0:
+            progresso = (i / total_bytes) * 100
+            print(f"Progresso: {i}/{total_bytes} bytes ({progresso:.1f}%)")
+
+        # Detectar transição entre arquivos e forçar reset
+        if proximo_arquivo_idx < len(estrutura_arquivos):
+            offset_proximo = estrutura_arquivos[proximo_arquivo_idx][2]
+            if i == offset_proximo:
+                print(
+                    f"Transição detectada: --> {estrutura_arquivos[proximo_arquivo_idx][0]}"
+                )
+                contexto_reset = bytes(dados_completos[max(0, i - kmax) : i])
+                eventos_reset = procurar_simbolo(contexto_reset, RESET)
+                codificar_eventos(eventos_reset)
+                reset_modelo()
+                proximo_arquivo_idx += 1
+                soma_bits_janela = 0.0
+                itens_janela = 0
+
+        contexto = bytes(dados_completos[max(0, i - kmax) : i])
+        simbolo = dados_completos[i]
+
+        eventos_simbolo = procurar_simbolo(contexto, simbolo)
+        comprimento_simbolo = codificar_eventos(eventos_simbolo)
+        atualizar_modelo(contexto, simbolo)
+
+        if janela is not None:
+            soma_bits_janela += comprimento_simbolo
+            itens_janela += 1
+
+            if itens_janela == janela:
+                media_janela_atual = soma_bits_janela / itens_janela
+
+                if (
+                    media_janela_anterior is not None
+                    and media_janela_atual
+                    > media_janela_anterior * (1 + pct_reset / 100.0)
+                ):
+                    print(
+                        f"Reset por piora de taxa: {media_janela_anterior:.2f} -> {media_janela_atual:.2f} bits/símbolo"
+                    )
+                    contexto_reset = bytes(
+                        dados_completos[max(0, i - kmax + 1) : i + 1]
+                    )
+                    eventos_reset = procurar_simbolo(contexto_reset, RESET)
+                    codificar_eventos(eventos_reset)
+                    reset_modelo()
+
+                media_janela_anterior = media_janela_atual
+                soma_bits_janela = 0.0
+                itens_janela = 0
+
+    codigo_final = finalizar_encoder()
+    print(f"Compressao finalizada: {len(codigo_final)} bits gerados")
+    print(f"Taxa de compressão: {len(codigo_final) / (total_bytes * 8):.2%}")
+
+    # Salvar com metadados de estrutura
+    bytes_data, num_bits = bits_para_bytes(codigo_final)
+    with open(output_path, "wb") as outfile:
+        # Cabeçalho
+        num_arquivos = len(estrutura_arquivos)
+        header = f"{kmax}\\n{total_bytes}\\n{num_arquivos}\\n{num_bits}\\n"
+        outfile.write(header.encode("utf-8"))
+
+        # Metadados de cada arquivo
+        for nome, tamanho, off in estrutura_arquivos:
+            linha = f"{nome}\\t{tamanho}\\t{off}\\n"
+            outfile.write(linha.encode("utf-8"))
+
+        # Dados comprimidos
+        outfile.write(bytes_data)
 
 
 def descomprimir(input_path, kmax, janela=None, pct_reset=10.0):
@@ -311,6 +458,11 @@ def parse_args():
     )
     parser.add_argument("kmax", type=int, help="Valor numerico de kmax")
     parser.add_argument(
+        "arquivos",
+        nargs="*",
+        help="Arquivo(s) para comprimir (modo 0) ou vazio para descomprimir (modo 1)",
+    )
+    parser.add_argument(
         "--janela",
         type=int,
         nargs="?",
@@ -324,19 +476,31 @@ def parse_args():
         default=10.0,
         help="Percentual de piora entre janelas para acionar reset (padrao: 10.0).",
     )
+    parser.add_argument(
+        "--progressivo",
+        action="store_true",
+        help="Salva dados de comprimento médio progressivo para análise de aprendizado.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    input_path = "dickens"
-    output_path = "output.ppmc"
-
     if args.mode == 0:
-        comprimir(input_path, output_path, args.kmax, args.janela, args.pct_reset)
+        # Compressão: requer arquivos
+        if not args.arquivos:
+            print("Erro: Modo compressão requer lista de arquivo(s)")
+            return
+
+        output_path = "output.ppmc"
+        comprimir_multiplos(
+            args.arquivos, output_path, args.kmax, args.janela, args.pct_reset
+        )
     else:
-        descomprimir(output_path, args.kmax, args.janela, args.pct_reset)
+        # Descompressão
+        input_path = "output.ppmc"
+        descomprimir(input_path, args.kmax, args.janela, args.pct_reset)
 
 
 if __name__ == "__main__":
