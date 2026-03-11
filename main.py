@@ -133,17 +133,24 @@ def atualizar_modelo(contexto, simbolo):
 
 def bits_para_bytes(bits):
     """Converte lista de bits em bytes."""
-    # Padding para multiplo de 8
     num_bits = len(bits)
-    padding = (8 - num_bits % 8) % 8
-    bits_padded = bits + [0] * padding
-
     bytes_data = bytearray()
-    for i in range(0, len(bits_padded), 8):
-        byte = 0
-        for j in range(8):
-            byte = (byte << 1) | bits_padded[i + j]
-        bytes_data.append(byte)
+
+    byte_atual = 0
+    bits_no_byte = 0
+
+    for bit in bits:
+        byte_atual = (byte_atual << 1) | (1 if bit else 0)
+        bits_no_byte += 1
+
+        if bits_no_byte == 8:
+            bytes_data.append(byte_atual)
+            byte_atual = 0
+            bits_no_byte = 0
+
+    if bits_no_byte > 0:
+        byte_atual <<= 8 - bits_no_byte
+        bytes_data.append(byte_atual)
 
     return bytes_data, num_bits
 
@@ -187,7 +194,13 @@ def salvar_arquivo_comprimido(
 
 
 def comprimir(
-    input_path, output_path, kmax, janela=None, pct_reset=10.0, salvar_progressivo=False
+    input_path,
+    output_path,
+    kmax,
+    janela=None,
+    pct_reset=10.0,
+    salvar_progressivo=False,
+    progress_step=1000,
 ):
     print(f"Comprimindo {input_path} para {output_path} com kmax={kmax}...")
 
@@ -205,9 +218,15 @@ def comprimir(
         itens_janela = 0
         total_bytes = len(data)
 
-        # Para análise de aprendizado
+        # Para analise de aprendizado
         dados_progressivos = []
-        intervalo_amostragem = max(1, total_bytes // 1000)  # 1000 pontos no gráfico
+        progress_step = max(1, progress_step)
+        if salvar_progressivo:
+            pontos_estimados = (total_bytes // progress_step) + 1
+            print(
+                f"Amostragem progressiva: 1 ponto a cada {progress_step} simbolos "
+                f"(~{pontos_estimados} pontos)"
+            )
 
         for i in range(len(data)):
             # Log de progresso a cada 1000 símbolos
@@ -226,10 +245,12 @@ def comprimir(
 
             atualizar_modelo(contexto, simbolo)
 
-            # Coletar dados progressivos para análise
-            if salvar_progressivo and (i % 100 == 0 or i == total_bytes - 1):
-                bits_acumulados = len(encoder["bits"])
-                dados_progressivos.append((i + 1, bits_acumulados))
+            # Coleta amostrada para reduzir overhead em arquivos grandes.
+            if salvar_progressivo:
+                pos = i + 1
+                if (pos % progress_step == 0) or (pos == total_bytes):
+                    bits_acumulados = len(encoder["bits"])
+                    dados_progressivos.append((pos, bits_acumulados))
 
             if janela is not None:
                 soma_bits_janela += comprimento_simbolo
@@ -271,7 +292,13 @@ def comprimir(
 
 
 def comprimir_multiplos(
-    arquivos, output_path, kmax, janela=None, pct_reset=10.0, salvar_progressivo=False
+    arquivos,
+    output_path,
+    kmax,
+    janela=None,
+    pct_reset=10.0,
+    salvar_progressivo=False,
+    progress_step=1000,
 ):
     """Comprime múltiplos arquivos em uma única compressão com detecção de transição."""
     print(
@@ -312,6 +339,13 @@ def comprimir_multiplos(
     proximo_arquivo_idx = 1  # Índice do próximo arquivo para transição
     dados_progressivos = []
     bits_acumulados = 0
+    progress_step = max(1, progress_step)
+    if salvar_progressivo:
+        pontos_estimados = (total_bytes // progress_step) + 1
+        print(
+            f"Amostragem progressiva: 1 ponto a cada {progress_step} simbolos "
+            f"(~{pontos_estimados} pontos)"
+        )
 
     for i in range(len(dados_completos)):
         # Log de progresso
@@ -341,11 +375,12 @@ def comprimir_multiplos(
         comprimento_simbolo = codificar_eventos(eventos_simbolo)
         atualizar_modelo(contexto, simbolo)
 
-        # Coletar dados progressivos
+        # Coleta amostrada para reduzir overhead em arquivos grandes.
         if salvar_progressivo:
             bits_acumulados += comprimento_simbolo
-            if i % 100 == 0 or i == len(dados_completos) - 1:
-                dados_progressivos.append((i + 1, bits_acumulados))
+            pos = i + 1
+            if (pos % progress_step == 0) or (pos == total_bytes):
+                dados_progressivos.append((pos, bits_acumulados))
 
         if janela is not None:
             soma_bits_janela += comprimento_simbolo
@@ -498,6 +533,12 @@ def parse_args():
         action="store_true",
         help="Salva dados de comprimento médio progressivo para análise de aprendizado.",
     )
+    parser.add_argument(
+        "--progress-step",
+        type=int,
+        default=1000,
+        help="Passo de amostragem do progressivo (padrao: 1000 simbolos por ponto).",
+    )
     return parser.parse_args()
 
 
@@ -518,6 +559,7 @@ def main():
             args.janela,
             args.pct_reset,
             args.progressivo,
+            args.progress_step,
         )
     else:
         # Descompressão

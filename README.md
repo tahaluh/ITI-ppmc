@@ -1,143 +1,115 @@
 # Compressor PPMC (Prediction by Partial Matching)
 
-Implementação do algoritmo PPMC com codificação aritmética para compressão de arquivos.
+Implementacao de PPMC com codificacao aritmetica para compressao/descompressao e scripts de analise dos experimentos 3.1, 3.2 e 3.3.
 
 ## Requisitos
 
-- Python 3.x
+- Python 3.10+
+- (Opcional) ambiente virtual `venv`
+- `matplotlib` para gerar graficos
 
-## Uso
+## Uso Basico (`main.py`)
 
-### Comprimir arquivo único
+### Compressao
 
 ```bash
-python3 main.py 0 <kmax> <arquivo>
+python3 main.py 0 <kmax> <arquivo1> [arquivo2 ...] [opcoes]
 ```
 
-### Comprimir múltiplos arquivos
+Exemplo (arquivo unico):
 
 ```bash
-python3 main.py 0 <kmax> <arquivo1> <arquivo2> ... <arquivoN> [opções]
+python3 main.py 0 4 silesia/dickens
 ```
 
-**Exemplo com Corpus Silesia:**
+Exemplo (multiplos arquivos com monitoramento):
 
 ```bash
-python3 main.py 0 4 silesia/dickens silesia/mozilla silesia/xml --janela 1000 --pct-reset 15
+python3 main.py 0 4 silesia/dickens silesia/mozilla silesia/xml --janela 1000 --pct-reset 15 --progressivo --progress-step 2000
 ```
 
-Neste modo, o compressor:
-1. Carrega todos os arquivos sequencialmente
-2. Detecta transições entre arquivos e força reset do modelo
-3. Monitora taxa local dentro de janelas adaptativas
-4. Salva metadados da estrutura no arquivo `.ppmc`
-
-### Descomprimir arquivo
+### Descompressao
 
 ```bash
-python3 main.py 1 <kmax> [opções]
+python3 main.py 1 <kmax>
 ```
 
-**Parâmetros:**
-- `1`: modo descompressão
-- `<kmax>`: deve ser o mesmo usado na compressão
-
-**Exemplos:**
+Exemplo:
 
 ```bash
-# Descompressão simples
 python3 main.py 1 4
-
-# Descompressão (janela é ignorada na descompressão, mas pode ser passada)
-python3 main.py 1 4 --janela
 ```
 
-**Entrada/Saída:**
-- Arquivo de entrada: `output.ppmc`
-- Arquivo de saída: `descomprimido/<nome_original>` (pasta criada automaticamente)
+## Parametros
 
-## Formato do arquivo comprimido (.ppmc)
+- `mode`: `0` para comprimir, `1` para descomprimir.
+- `kmax`: ordem maxima de contexto.
+- `arquivos`: um ou mais arquivos de entrada (obrigatorio em `mode=0`).
+- `--janela [N]`: ativa monitoramento local (padrao `1000` se passado sem valor).
+- `--pct-reset X`: limiar de piora percentual para reset (padrao `10.0`).
+- `--progressivo`: salva dados de aprendizado progressivo em `output_progressivo.txt`.
+- `--progress-step N`: passo de amostragem do progressivo (padrao `1000`).
 
-```
-<kmax>
-<tamanho_original>
-<nome_original>
-<num_bits>
-<dados_binários>
-```
+## Entradas e Saidas
 
-## Monitoramento de taxa local e reset
+- Comprimido: `output.ppmc`
+- Progressivo: `output_progressivo.txt` (quando `--progressivo`)
+- Descomprimido: `descomprimido/<nome_original>`
 
-Quando `--janela` é ativado, o compressor:
-1. Monitora a média de bits/símbolo em janelas adjacentes de tamanho especificado
-2. Se a média da janela atual exceder a anterior por mais de `pct-reset`%, o modelo é resetado
-3. Um marcador de reset é inserido no fluxo para sincronizar o descompressor
+## Experimentos
 
-## Observações
+### 3.1 - Ordem e Performance
 
-- Para arquivos grandes (>10MB), a compressão pode demorar devido à complexidade do algoritmo PPMC
-- Recomenda-se usar `kmax` menor (2-3) para arquivos grandes
-- O arquivo comprimido usa formato binário real (não texto) para máxima eficiência
-- Logs de progresso aparecem a cada 1000 símbolos processados
-
-## Análise e Testes
-
-### Script de análise completa (3.1, 3.2, 3.3)
-
-Para executar análise completa de performance, aprendizado e transições:
+Script principal no repositorio:
 
 ```bash
-python3 analise_completa.py
+python3 analise_silesia_final.py
 ```
 
-Este script executa:
+Tambem existe CSV de referencia:
 
-**3.1 - Análise de Ordem e Performance:**
-- Testa kmax de 0 a 10
-- Registra: bits/símbolo, quantidade de compressão, tempo
-- Salva resultados em: `analise_3_1_resultados.csv`
+- `analise_3_1_silesia_completo.csv`
 
-**3.2 - Aprendizado Progressivo (Dickens):**
-- Coleta comprimento médio progressivo durante compressão
-- Identifica ponto de estabilização no arquivo
-- Gera dados para gráfico em `output_progressivo.txt`
-- Cria script `plotar_3_2.py` para visualização
+### 3.2 - Aprendizado Progressivo (Dickens)
 
-**3.3 - Transições e Reset (Corpus Silesia):**
-- Comprime múltiplos arquivos do Silesia
-- Detecta transições entre arquivos
-- Monitora resets automáticos por piora de taxa
-- Analisa impacto das transições na compressão
+Opcao rapida:
 
-**Aviso:** A análise completa pode levar **1-3 horas** dependendo dos arquivos disponíveis.
-
-Para testar apenas 3.2 (rápido):
 ```bash
-python3 main.py 0 4 dickens --progressivo
+python3 main.py 0 4 silesia/dickens --progressivo --progress-step 1000
 python3 plotar_3_2.py
 ```
 
-### Corpus Silesia
-
-Os arquivos do Corpus Silesia devem estar em: `silesia/`
-
-Arquivos suportados:
-- dickens (texto literário)
-- mozilla (código)
-- mr (dados mistos)
-- nci (dados biomédicos)
-- ooffice (documento Office)
-- osdb (database)
-- reymont (MIDI)
-- samba (código-fonte)
-- sao (SAO database)
-- webster (dicionário)
-- x-ray (imagem médica)
-- xml (dados estruturados)
-
-### Todo o requisito 3.1 e 3.2 pode ser processado com:
+Alternativa com script dedicado:
 
 ```bash
-# Teste único com análise de aprendizado
-python3 main.py 0 4 silesia/dickens --janela 1000 --pct-reset 15
+python3 gerar_3_2.py
 ```
+
+Saida esperada:
+
+- `grafico_3_2_silesia_progressive.png`
+
+### 3.3 - Transicoes e Reset (Silesia)
+
+Script recomendado:
+
+```bash
+python3 refazer_3_3_taxa.py
+```
+
+Esse script:
+
+- executa compressao de todo o Silesia com reset adaptativo;
+- registra logs em tempo real + heartbeat;
+- em caso de falha, tenta fallback sem janela/reset;
+- gera:
+	- `grafico_3_3_taxa_ao_longo.png`
+	- `resumo_3_3_taxa.txt`
+	- `refazer_3_3_exec.log` (e fallback, se houver)
+
+## Observacoes
+
+- `exit code 130` normalmente indica interrupcao manual (`Ctrl+C`).
+- `exit -11` indica termino por sinal `SIGSEGV` no processo filho.
+- Para reduzir custo de E/S e memoria no progressivo, prefira `--progress-step` entre `1000` e `5000` para corpus grandes.
+- O experimento 3.3 pode levar dezenas de minutos dependendo da maquina.

@@ -6,14 +6,14 @@ PRIMEIRO_QUARTO = METADE >> 1
 TERCEIRO_QUARTO = PRIMEIRO_QUARTO * 3
 
 
-encoder = {"baixo": 0, "alto": MAX_INTERVALO, "bits_pendentes": 0, "bits": []}
+encoder = {"baixo": 0, "alto": MAX_INTERVALO, "bits_pendentes": 0, "bits": bytearray()}
 
 
 def inicializar_encoder():
     encoder["baixo"] = 0
     encoder["alto"] = MAX_INTERVALO
     encoder["bits_pendentes"] = 0
-    encoder["bits"] = []
+    encoder["bits"] = bytearray()
 
 
 def escrever_bit(bit):

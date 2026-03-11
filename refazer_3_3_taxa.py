@@ -10,24 +10,96 @@ Saidas:
 """
 
 import os
+import selectors
+import signal
 import subprocess
 import time
 
 
 def _executar_cmd(cmd, timeout, log_path):
     inicio = time.time()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    tempo_total = time.time() - inicio
+    heartbeat_s = 20
+    ultimo_heartbeat = inicio
+
+    transicoes = 0
+    resets = 0
+    ultimas_stderr = []
+    max_ultimas_stderr = 80
 
     with open(log_path, "w", encoding="utf-8") as f:
-        f.write("STDOUT\n")
-        f.write("=" * 60 + "\n")
-        f.write(result.stdout or "")
-        f.write("\n\nSTDERR\n")
-        f.write("=" * 60 + "\n")
-        f.write(result.stderr or "")
+        f.write(f"CMD: {' '.join(cmd)}\n")
+        f.write("=" * 80 + "\n")
+        f.flush()
 
-    return result, tempo_total
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ, data="STDOUT")
+        sel.register(proc.stderr, selectors.EVENT_READ, data="STDERR")
+
+        try:
+            while sel.get_map():
+                agora = time.time()
+                if timeout and (agora - inicio) > timeout:
+                    proc.kill()
+                    raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+                eventos = sel.select(timeout=1.0)
+                if not eventos and (agora - ultimo_heartbeat) >= heartbeat_s:
+                    decorrido = int(agora - inicio)
+                    hb = f"[HEARTBEAT] Execucao em andamento... {decorrido}s"
+                    print(hb)
+                    f.write(hb + "\n")
+                    f.flush()
+                    ultimo_heartbeat = agora
+
+                for key, _ in eventos:
+                    stream = key.fileobj
+                    origem = key.data
+                    linha = stream.readline()
+
+                    if linha == "":
+                        sel.unregister(stream)
+                        continue
+
+                    linha_limpa = linha.rstrip("\n")
+                    msg = f"[{origem}] {linha_limpa}"
+                    print(msg)
+                    f.write(msg + "\n")
+                    f.flush()
+
+                    if origem == "STDOUT":
+                        if "Transição" in linha_limpa or "Transicao" in linha_limpa:
+                            transicoes += 1
+                        if "Reset" in linha_limpa:
+                            resets += 1
+                    else:
+                        ultimas_stderr.append(linha_limpa)
+                        if len(ultimas_stderr) > max_ultimas_stderr:
+                            ultimas_stderr.pop(0)
+
+            returncode = proc.wait()
+
+        finally:
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+
+    tempo_total = time.time() - inicio
+    result = subprocess.CompletedProcess(
+        args=cmd,
+        returncode=returncode,
+        stdout="",
+        stderr="\n".join(ultimas_stderr),
+    )
+    return result, tempo_total, transicoes, resets
 
 
 def listar_arquivos_silesia(silesia_dir="silesia"):
@@ -41,9 +113,16 @@ def listar_arquivos_silesia(silesia_dir="silesia"):
     return arquivos
 
 
-def executar_3_3(arquivos, kmax=4, janela=1000, pct_reset=15.0, timeout=21600):
+def executar_3_3(
+    arquivos,
+    kmax=4,
+    janela=2000,
+    pct_reset=30.0,
+    progress_step=2000,
+    timeout=21600,
+):
     cmd = (
-        ["python3", "main.py", "0", str(kmax)]
+        ["python3", "-X", "faulthandler", "-u", "main.py", "0", str(kmax)]
         + arquivos
         + [
             "--janela",
@@ -51,28 +130,80 @@ def executar_3_3(arquivos, kmax=4, janela=1000, pct_reset=15.0, timeout=21600):
             "--pct-reset",
             str(pct_reset),
             "--progressivo",
+            "--progress-step",
+            str(progress_step),
         ]
     )
-    cmd_fallback = ["python3", "main.py", "0", str(kmax)] + arquivos + ["--progressivo"]
+    cmd_fallback = (
+        ["python3", "-X", "faulthandler", "-u", "main.py", "0", str(kmax)]
+        + arquivos
+        + ["--progressivo", "--progress-step", str(progress_step)]
+    )
 
     print("\n" + "=" * 80)
     print("REFAZENDO EXPERIMENTO 3.3 (TAXA AO LONGO DO FLUXO)")
     print("=" * 80)
     print(f"Arquivos: {len(arquivos)}")
-    print(f"kmax={kmax}, janela={janela}, pct-reset={pct_reset}%")
+    print(
+        f"kmax={kmax}, janela={janela}, pct-reset={pct_reset}%, "
+        f"progress-step={progress_step}"
+    )
     print("Executando compressao completa...\n")
 
-    result, tempo_total = _executar_cmd(cmd, timeout, "refazer_3_3_exec.log")
+    result, tempo_total, transicoes, resets = _executar_cmd(
+        cmd, timeout, "refazer_3_3_exec.log"
+    )
 
     if result.returncode != 0:
+        if result.returncode < 0:
+            sig_num = -result.returncode
+            try:
+                sig_nome = signal.Signals(sig_num).name
+            except Exception:
+                sig_nome = "DESCONHECIDO"
+            print(
+                f"Causa da falha principal: processo finalizado por sinal {sig_num} ({sig_nome})."
+            )
+            if sig_num == 11:
+                print(
+                    "Diagnostico: SIGSEGV (segmentation fault), geralmente associado a "
+                    "pressao extrema de memoria ou falha em codigo nativo."
+                )
+        else:
+            print(f"Causa da falha principal: retorno nao-zero ({result.returncode}).")
+
+        if result.stderr:
+            print("Ultimas linhas de stderr da tentativa principal:")
+            for linha in result.stderr.splitlines()[-20:]:
+                print(f"  {linha}")
+
         print(f"Falha na tentativa principal (exit {result.returncode}).")
         print("Log salvo em refazer_3_3_exec.log")
         print("Tentando fallback sem janela/reset para evitar crash...\n")
 
-        result, tempo_total = _executar_cmd(
+        result, tempo_total, transicoes, resets = _executar_cmd(
             cmd_fallback, timeout, "refazer_3_3_exec_fallback.log"
         )
         if result.returncode != 0:
+            if result.returncode < 0:
+                sig_num = -result.returncode
+                try:
+                    sig_nome = signal.Signals(sig_num).name
+                except Exception:
+                    sig_nome = "DESCONHECIDO"
+                print(
+                    f"Causa da falha fallback: processo finalizado por sinal {sig_num} ({sig_nome})."
+                )
+            else:
+                print(
+                    f"Causa da falha fallback: retorno nao-zero ({result.returncode})."
+                )
+
+            if result.stderr:
+                print("Ultimas linhas de stderr do fallback:")
+                for linha in result.stderr.splitlines()[-20:]:
+                    print(f"  {linha}")
+
             print(f"Fallback tambem falhou (exit {result.returncode}).")
             print("Log salvo em refazer_3_3_exec_fallback.log")
 
@@ -84,15 +215,11 @@ def executar_3_3(arquivos, kmax=4, janela=1000, pct_reset=15.0, timeout=21600):
 
             raise RuntimeError(f"Falha na compressao (exit {result.returncode})")
 
-    linhas = result.stdout.splitlines()
-    transicoes = [l for l in linhas if "Transição" in l or "Transicao" in l]
-    resets = [l for l in linhas if "Reset" in l]
-
     print(f"Tempo total: {tempo_total:.1f}s")
-    print(f"Transicoes detectadas: {len(transicoes)}")
-    print(f"Resets acionados: {len(resets)}")
+    print(f"Transicoes detectadas: {transicoes}")
+    print(f"Resets acionados: {resets}")
 
-    return tempo_total, len(transicoes), len(resets)
+    return tempo_total, transicoes, resets
 
 
 def carregar_progressivo(path="output_progressivo.txt"):
@@ -213,7 +340,7 @@ def main():
         raise RuntimeError("Nenhum arquivo na pasta silesia")
 
     tempo_total, transicoes, resets = executar_3_3(
-        arquivos, kmax=4, janela=1000, pct_reset=15.0
+        arquivos, kmax=4, janela=2000, pct_reset=30.0
     )
 
     xs, bits_acum = carregar_progressivo("output_progressivo.txt")

@@ -35,13 +35,12 @@ def gerar_grafico_3_2():
 
     x, y = zip(*dados)
     x_max = x[-1]
-    x_milhoes = [v / 1_000_000 for v in x]
 
     fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(x_milhoes, y, linewidth=2, color="#2E86AB", label="Comprimento medio")
+    ax.plot(x, y, linewidth=2, color="#2E86AB", label="Comprimento medio")
     # Forca o eixo X a ir exatamente do inicio ao ultimo ponto coletado.
-    ax.set_xlim(0, x_max / 1_000_000)
-    ax.set_xlabel("Posicao no arquivo (milhoes de simbolos)", fontsize=12)
+    ax.set_xlim(0, x_max)
+    ax.set_xlabel("Posicao n no arquivo (simbolos)", fontsize=12)
     ax.set_ylabel("Bits/símbolo", fontsize=12)
     ax.set_title("Aprendizado Progressivo - Dickens (kmax=4)", fontsize=14)
     ax.grid(True, alpha=0.3)
@@ -49,10 +48,10 @@ def gerar_grafico_3_2():
 
     # Eixo secundario para mostrar percentual do fluxo (0% a 100%)
     ax_top = ax.twiny()
-    ax_top.set_xlim(0, x_max / 1_000_000)
+    ax_top.set_xlim(0, x_max)
     ax_top.set_xlabel("Percentual do fluxo processado", fontsize=11)
     ax_top.xaxis.set_major_formatter(
-        FuncFormatter(lambda val, pos: f"{(val * 1_000_000 / x_max) * 100:.0f}%")
+        FuncFormatter(lambda val, pos: f"{(val / x_max) * 100:.0f}%")
     )
 
     plt.tight_layout()
@@ -60,13 +59,15 @@ def gerar_grafico_3_2():
 
     print("✓ Gráfico salvo: grafico_3_2_silesia_progressive.png")
 
-    # Análise
-    inicio = y[0]
+    # Analise robusta: ignora o inicio extremo (pos=1) e usa baseline em 1% do fluxo.
     fim = y[-1]
-    reducao = ((inicio - fim) / inicio * 100) if inicio > 0 else 0
+    thr_1pct = 0.01 * x_max
+    i_base = next((i for i, xv in enumerate(x) if xv >= thr_1pct), 0)
+    base_1pct = y[i_base]
+    reducao = ((base_1pct - fim) / base_1pct * 100) if base_1pct > 0 else 0
 
     print("\nAnalise:")
-    print(f"   Comprimento inicial:  {inicio:.4f} bits/simbolo")
+    print(f"   Baseline (1% fluxo):  {base_1pct:.4f} bits/simbolo")
     print(f"   Comprimento final:    {fim:.4f} bits/simbolo")
     print(f"   Melhoria total:       {reducao:.1f}%")
     print(f"   Pontos coletados:     {len(dados)}")
