@@ -1,0 +1,7 @@
+Experimento 3.3 - Resumo
+========================================
+Tempo total (s): 4557.7
+Transicoes detectadas: 11
+Resets acionados: 49261
+Bits/simbolo final: 3.591158
+Taxa final (%): 44.8895

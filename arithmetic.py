@@ -6,21 +6,53 @@ PRIMEIRO_QUARTO = METADE >> 1
 TERCEIRO_QUARTO = PRIMEIRO_QUARTO * 3
 
 
-encoder = {"baixo": 0, "alto": MAX_INTERVALO, "bits_pendentes": 0, "bits": bytearray()}
+# Modo legado: bits armazenados como lista de ints 0/1 em encoder["bits"].
+# Modo streaming: bits agrupados em bytes e escritos em encoder["_outfile"].
+encoder = {
+    "baixo": 0,
+    "alto": MAX_INTERVALO,
+    "bits_pendentes": 0,
+    # legado
+    "bits": [],
+    # streaming
+    "bits_count": 0,
+    "_outfile": None,
+    "_byte_buf": 0,
+    "_byte_bits": 0,
+}
 
 
-def inicializar_encoder():
+def inicializar_encoder(outfile=None):
+    """outfile: arquivo aberto em 'r+b' para escrita streaming de bytes.
+    None = modo legado (acumula bits em lista)."""
     encoder["baixo"] = 0
     encoder["alto"] = MAX_INTERVALO
     encoder["bits_pendentes"] = 0
-    encoder["bits"] = bytearray()
+    encoder["bits"] = []
+    encoder["bits_count"] = 0
+    encoder["_outfile"] = outfile
+    encoder["_byte_buf"] = 0
+    encoder["_byte_bits"] = 0
+
+
+def _emitir_bit(bit):
+    """Emite um bit no canal de saida (legado ou streaming)."""
+    if encoder["_outfile"] is not None:
+        encoder["bits_count"] += 1
+        encoder["_byte_buf"] = (encoder["_byte_buf"] << 1) | bit
+        encoder["_byte_bits"] += 1
+        if encoder["_byte_bits"] == 8:
+            encoder["_outfile"].write(bytes([encoder["_byte_buf"]]))
+            encoder["_byte_buf"] = 0
+            encoder["_byte_bits"] = 0
+    else:
+        encoder["bits"].append(bit)
 
 
 def escrever_bit(bit):
-    encoder["bits"].append(bit)
-
+    _emitir_bit(bit)
     while encoder["bits_pendentes"] > 0:
-        encoder["bits"].append(1 - bit)
+        _emitir_bit(1 - bit)
         encoder["bits_pendentes"] -= 1
 
 
@@ -69,8 +101,23 @@ def finalizar_encoder():
     else:
         escrever_bit(1)
 
+    if encoder["_outfile"] is not None:
+        # Flush byte parcial com padding de zeros a direita
+        if encoder["_byte_bits"] > 0:
+            padded = encoder["_byte_buf"] << (8 - encoder["_byte_bits"])
+            encoder["_outfile"].write(bytes([padded]))
+            encoder["_byte_buf"] = 0
+            encoder["_byte_bits"] = 0
+        encoder["_outfile"].flush()
+        return encoder["bits_count"]
+
+    # Modo legado: retorna lista de bits
     return encoder["bits"]
 
+
+# ---------------------------------------------------------------------------
+# Decoder (inalterado)
+# ---------------------------------------------------------------------------
 
 decoder = {"baixo": 0, "alto": MAX_INTERVALO, "codigo": 0, "bits": [], "pos": 0}
 

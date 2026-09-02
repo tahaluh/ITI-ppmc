@@ -51,7 +51,11 @@ def codificar_eventos(eventos_simbolo):
 
 
 def codificar_evento(contexto, evento, excluidos):
-    bits_antes = len(encoder["bits"])
+    # bits_count funciona tanto no modo legado (len lista) quanto streaming.
+    if encoder["_outfile"] is not None:
+        bits_antes = encoder["bits_count"]
+    else:
+        bits_antes = len(encoder["bits"])
 
     frequencias = obter_frequencias(contexto, excluidos, evento)
     cumulativos, total = construir_cumulativos(frequencias)
@@ -60,8 +64,10 @@ def codificar_evento(contexto, evento, excluidos):
 
     codificar_intervalo(inicio, fim, total)
 
-    # Comprimento real observado: quantidade de bits efetivamente emitidos.
-    bits_depois = len(encoder["bits"])
+    if encoder["_outfile"] is not None:
+        bits_depois = encoder["bits_count"]
+    else:
+        bits_depois = len(encoder["bits"])
     return bits_depois - bits_antes
 
 
@@ -330,103 +336,110 @@ def comprimir_multiplos(
     if janela is not None:
         print(f"Monitoramento local ativo: janela={janela}, pct_reset={pct_reset}%")
 
-    reset_modelo()
-    inicializar_encoder()
+    # --- Cabeçalho fixo (num_bits preenchido ao final via seek) ---
+    num_arquivos = len(estrutura_arquivos)
+    # Reservamos 20 dígitos para num_bits para poder fazer seek+overwrite.
+    NBITS_PLACEHOLDER = "0" * 20
+    header_fixo = f"{kmax}\n{total_bytes}\n{num_arquivos}\n{NBITS_PLACEHOLDER}\n"
+    metadados = ""
+    for nome, tamanho, off in estrutura_arquivos:
+        metadados += f"{nome}\t{tamanho}\t{off}\n"
+    header_bytes = header_fixo.encode("utf-8") + metadados.encode("utf-8")
+    header_len = len(header_bytes)
 
-    media_janela_anterior = None
-    soma_bits_janela = 0.0
-    itens_janela = 0
-    proximo_arquivo_idx = 1  # Índice do próximo arquivo para transição
-    dados_progressivos = []
-    bits_acumulados = 0
-    progress_step = max(1, progress_step)
-    if salvar_progressivo:
-        pontos_estimados = (total_bytes // progress_step) + 1
-        print(
-            f"Amostragem progressiva: 1 ponto a cada {progress_step} simbolos "
-            f"(~{pontos_estimados} pontos)"
-        )
+    with open(output_path, "wb") as outfile:
+        outfile.write(header_bytes)
 
-    for i in range(len(dados_completos)):
-        # Log de progresso
-        if i > 0 and i % 100000 == 0:
-            progresso = (i / total_bytes) * 100
-            print(f"Progresso: {i}/{total_bytes} bytes ({progresso:.1f}%)")
+        reset_modelo()
+        inicializar_encoder(outfile)  # streaming: bits vão direto ao arquivo
 
-        # Detectar transição entre arquivos e forçar reset
-        if proximo_arquivo_idx < len(estrutura_arquivos):
-            offset_proximo = estrutura_arquivos[proximo_arquivo_idx][2]
-            if i == offset_proximo:
-                print(
-                    f"Transição detectada: --> {estrutura_arquivos[proximo_arquivo_idx][0]}"
-                )
-                contexto_reset = bytes(dados_completos[max(0, i - kmax) : i])
-                eventos_reset = procurar_simbolo(contexto_reset, RESET)
-                codificar_eventos(eventos_reset)
-                reset_modelo()
-                proximo_arquivo_idx += 1
-                soma_bits_janela = 0.0
-                itens_janela = 0
-
-        contexto = bytes(dados_completos[max(0, i - kmax) : i])
-        simbolo = dados_completos[i]
-
-        eventos_simbolo = procurar_simbolo(contexto, simbolo)
-        comprimento_simbolo = codificar_eventos(eventos_simbolo)
-        atualizar_modelo(contexto, simbolo)
-
-        # Coleta amostrada para reduzir overhead em arquivos grandes.
+        media_janela_anterior = None
+        soma_bits_janela = 0.0
+        itens_janela = 0
+        proximo_arquivo_idx = 1  # Índice do próximo arquivo para transição
+        dados_progressivos = []
+        bits_acumulados = 0.0
+        progress_step = max(1, progress_step)
         if salvar_progressivo:
-            bits_acumulados += comprimento_simbolo
-            pos = i + 1
-            if (pos % progress_step == 0) or (pos == total_bytes):
-                dados_progressivos.append((pos, bits_acumulados))
+            pontos_estimados = (total_bytes // progress_step) + 1
+            print(
+                f"Amostragem progressiva: 1 ponto a cada {progress_step} simbolos "
+                f"(~{pontos_estimados} pontos)"
+            )
 
-        if janela is not None:
-            soma_bits_janela += comprimento_simbolo
-            itens_janela += 1
+        for i in range(len(dados_completos)):
+            # Log de progresso
+            if i > 0 and i % 100000 == 0:
+                progresso = (i / total_bytes) * 100
+                print(f"Progresso: {i}/{total_bytes} bytes ({progresso:.1f}%)")
 
-            if itens_janela == janela:
-                media_janela_atual = soma_bits_janela / itens_janela
-
-                if (
-                    media_janela_anterior is not None
-                    and media_janela_atual
-                    > media_janela_anterior * (1 + pct_reset / 100.0)
-                ):
+            # Detectar transição entre arquivos e forçar reset
+            if proximo_arquivo_idx < len(estrutura_arquivos):
+                offset_proximo = estrutura_arquivos[proximo_arquivo_idx][2]
+                if i == offset_proximo:
                     print(
-                        f"Reset por piora de taxa: {media_janela_anterior:.2f} -> {media_janela_atual:.2f} bits/símbolo"
+                        f"Transição detectada: --> {estrutura_arquivos[proximo_arquivo_idx][0]}"
                     )
-                    contexto_reset = bytes(
-                        dados_completos[max(0, i - kmax + 1) : i + 1]
-                    )
+                    contexto_reset = bytes(dados_completos[max(0, i - kmax) : i])
                     eventos_reset = procurar_simbolo(contexto_reset, RESET)
                     codificar_eventos(eventos_reset)
                     reset_modelo()
+                    proximo_arquivo_idx += 1
+                    soma_bits_janela = 0.0
+                    itens_janela = 0
 
-                media_janela_anterior = media_janela_atual
-                soma_bits_janela = 0.0
-                itens_janela = 0
+            contexto = bytes(dados_completos[max(0, i - kmax) : i])
+            simbolo = dados_completos[i]
 
-    codigo_final = finalizar_encoder()
-    print(f"Compressao finalizada: {len(codigo_final)} bits gerados")
-    print(f"Taxa de compressão: {len(codigo_final) / (total_bytes * 8):.2%}")
+            eventos_simbolo = procurar_simbolo(contexto, simbolo)
+            comprimento_simbolo = codificar_eventos(eventos_simbolo)
+            atualizar_modelo(contexto, simbolo)
 
-    # Salvar com metadados de estrutura
-    bytes_data, num_bits = bits_para_bytes(codigo_final)
-    with open(output_path, "wb") as outfile:
-        # Cabeçalho
-        num_arquivos = len(estrutura_arquivos)
-        header = f"{kmax}\\n{total_bytes}\\n{num_arquivos}\\n{num_bits}\\n"
-        outfile.write(header.encode("utf-8"))
+            # Coleta amostrada para reduzir overhead em arquivos grandes.
+            if salvar_progressivo:
+                bits_acumulados += comprimento_simbolo
+                pos = i + 1
+                if (pos % progress_step == 0) or (pos == total_bytes):
+                    dados_progressivos.append((pos, bits_acumulados))
 
-        # Metadados de cada arquivo
-        for nome, tamanho, off in estrutura_arquivos:
-            linha = f"{nome}\\t{tamanho}\\t{off}\\n"
-            outfile.write(linha.encode("utf-8"))
+            if janela is not None:
+                soma_bits_janela += comprimento_simbolo
+                itens_janela += 1
 
-        # Dados comprimidos
-        outfile.write(bytes_data)
+                if itens_janela == janela:
+                    media_janela_atual = soma_bits_janela / itens_janela
+
+                    if (
+                        media_janela_anterior is not None
+                        and media_janela_atual
+                        > media_janela_anterior * (1 + pct_reset / 100.0)
+                    ):
+                        print(
+                            f"Reset por piora de taxa: {media_janela_anterior:.2f} -> {media_janela_atual:.2f} bits/símbolo"
+                        )
+                        contexto_reset = bytes(
+                            dados_completos[max(0, i - kmax + 1) : i + 1]
+                        )
+                        eventos_reset = procurar_simbolo(contexto_reset, RESET)
+                        codificar_eventos(eventos_reset)
+                        reset_modelo()
+
+                    media_janela_anterior = media_janela_atual
+                    soma_bits_janela = 0.0
+                    itens_janela = 0
+
+        num_bits = finalizar_encoder()
+        print(f"Compressao finalizada: {num_bits} bits gerados")
+        print(f"Taxa de compressão: {num_bits / (total_bytes * 8):.2%}")
+
+        # Reescreve num_bits no cabeçalho (seek ao campo reservado)
+        nbits_str = str(num_bits).ljust(20)  # mesmo tamanho do placeholder
+        # O campo num_bits começa após: "kmax\ntotal_bytes\nnum_arquivos\n"
+        prefix = f"{kmax}\n{total_bytes}\n{num_arquivos}\n".encode("utf-8")
+        outfile.seek(len(prefix))
+        outfile.write(nbits_str.encode("utf-8"))
+
+    print(f"Arquivo salvo em {output_path}")
 
     # Salvar dados progressivos se solicitado
     if salvar_progressivo and dados_progressivos:
@@ -434,7 +447,7 @@ def comprimir_multiplos(
         with open(prog_path, "w") as f:
             f.write("posicao bits_acumulados\n")
             for pos, bits_acum in dados_progressivos:
-                f.write(f"{pos} {bits_acum}\n")
+                f.write(f"{pos} {int(bits_acum)}\n")
         print(f"Dados progressivos salvos em {prog_path}")
 
 

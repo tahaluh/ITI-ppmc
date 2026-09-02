@@ -115,25 +115,17 @@ def listar_arquivos_silesia(silesia_dir="silesia"):
 
 def executar_3_3(
     arquivos,
-    kmax=4,
-    janela=2000,
-    pct_reset=30.0,
+    kmax=5,
+    janela=15000,
+    pct_reset=50.0,
     progress_step=2000,
     timeout=21600,
 ):
-    cmd = (
-        ["python3", "-X", "faulthandler", "-u", "main.py", "0", str(kmax)]
-        + arquivos
-        + [
-            "--janela",
-            str(janela),
-            "--pct-reset",
-            str(pct_reset),
-            "--progressivo",
-            "--progress-step",
-            str(progress_step),
-        ]
-    )
+    cmd = ["python3", "-X", "faulthandler", "-u", "main.py", "0", str(kmax)]
+    cmd += arquivos
+    if janela is not None:
+        cmd += ["--janela", str(janela), "--pct-reset", str(pct_reset)]
+    cmd += ["--progressivo", "--progress-step", str(progress_step)]
     cmd_fallback = (
         ["python3", "-X", "faulthandler", "-u", "main.py", "0", str(kmax)]
         + arquivos
@@ -144,10 +136,13 @@ def executar_3_3(
     print("REFAZENDO EXPERIMENTO 3.3 (TAXA AO LONGO DO FLUXO)")
     print("=" * 80)
     print(f"Arquivos: {len(arquivos)}")
-    print(
-        f"kmax={kmax}, janela={janela}, pct-reset={pct_reset}%, "
-        f"progress-step={progress_step}"
-    )
+    if janela is None:
+        print(f"kmax={kmax}, sem reset por janela, progress-step={progress_step}")
+    else:
+        print(
+            f"kmax={kmax}, janela={janela}, pct-reset={pct_reset}%, "
+            f"progress-step={progress_step}"
+        )
     print("Executando compressao completa...\n")
 
     result, tempo_total, transicoes, resets = _executar_cmd(
@@ -339,8 +334,9 @@ def main():
     if not arquivos:
         raise RuntimeError("Nenhum arquivo na pasta silesia")
 
+    # Sem janela: desativa reset por piora de taxa e mantem coleta progressiva.
     tempo_total, transicoes, resets = executar_3_3(
-        arquivos, kmax=4, janela=2000, pct_reset=30.0
+        arquivos, kmax=5, janela=15000, pct_reset=50.0
     )
 
     xs, bits_acum = carregar_progressivo("output_progressivo.txt")
